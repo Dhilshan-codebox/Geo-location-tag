@@ -1,71 +1,147 @@
-const socket = io();
+const express = require("express");
+const http = require("http");
+const socketio = require("socket.io");
 
-// High accuracy options for geolocation
-const geoOptions = {
-    enableHighAccuracy: true, // Forces GPS instead of network-based location
-    timeout: 10000,           // Allow more time for a precise fix
-    maximumAge: 0             // Do not use cached locations
-};
+const app = express();
+const server = http.createServer(app);
+const io = socketio(server);
 
-// Watch position with higher accuracy
-if (navigator.geolocation) {
-    navigator.geolocation.watchPosition(
-        (position) => {
-            const { latitude, longitude, accuracy } = position.coords;
+app.get("/", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>3D Live Location Map</title>
+        <style>
+            body, html { margin: 0; padding: 0; height: 100%; }
+            #map { width: 100%; height: 100%; }
+        </style>
+        <!-- Ola Maps CSS -->
+        <link
+          href="https://api.olamaps.io/sdk/css?key=YOUR_API_KEY"
+          rel="stylesheet"
+        />
+    </head>
+    <body>
+        <div id="map"></div>
 
-            console.log(`Lat: ${latitude}, Lng: ${longitude}, Accuracy: ${accuracy} meters`);
+        <!-- Socket.io client -->
+        <script src="/socket.io/socket.io.js"></script>
+        <!-- Ola Maps SDK -->
+        <script src="https://unpkg.com/olamaps-web-sdk@latest/dist/olamaps-web-sdk.umd.js"></script>
 
-            // Send position to server
-            socket.emit("send-location", { latitude, longitude, accuracy });
-        },
-        (error) => {
-            console.error("Geolocation error:", error);
-        },
-        geoOptions
-    );
-}
+        <script>
+            const socket = io();
+            let myMarker = null;
+            let myAccuracyCircle = null;
+            const otherMarkers = {};
 
-// Initialize Leaflet map
-const map = L.map("map").setView([0, 0], 18); // Zoom in more for better precision
+            window.addEventListener("load", () => {
+                if (!window.OlaMaps) {
+                    alert("Ola Maps SDK failed to load.");
+                    return;
+                }
 
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors",
-    maxZoom: 20
-}).addTo(map);
+                const olaMaps = new window.OlaMaps({
+                    apiKey: "YOUR_API_KEY"
+                });
 
-// Store user markers
-const markers = {};
+                const map = olaMaps.init({
+                    style: "https://api.olamaps.io/tiles/vector/v1/styles/satellite-standard/style.json",
+                    container: "map",
+                    zoom: 17,
+                    pitch: 60,
+                    bearing: -20
+                });
 
-// Show accuracy circles
-const accuracyCircles = {};
+                // ✅ Wait until the map is fully ready
+                map.on("load", () => {
+                    if (navigator.geolocation) {
+                        navigator.geolocation.watchPosition(
+                            (position) => {
+                                const { latitude, longitude, accuracy } = position.coords;
+                                const coords = [longitude, latitude];
 
-socket.on("receive-location", (data) => {
-    const { id, latitude, longitude, accuracy } = data;
+                                if (!myMarker) {
+                                    map.setCenter(coords);
 
-    // Center map on user only if they are new
-    if (!markers[id]) {
-        map.setView([latitude, longitude], 18);
-    }
+                                    // Create user marker
+                                    myMarker = olaMaps.addMarker({
+                                        map,
+                                        lngLat: coords,
+                                        color: "blue"
+                                    });
 
-    if (markers[id]) {
-        markers[id].setLatLng([latitude, longitude]);
-        accuracyCircles[id].setLatLng([latitude, longitude]).setRadius(accuracy);
-    } else {
-        markers[id] = L.marker([latitude, longitude]).addTo(map);
-        accuracyCircles[id] = L.circle([latitude, longitude], {
-            radius: accuracy,
-            color: "blue",
-            fillColor: "blue",
-            fillOpacity: 0.2
-        }).addTo(map);
-    }
+                                    // Accuracy circle
+                                    myAccuracyCircle = olaMaps.addCircle({
+                                        map,
+                                        center: coords,
+                                        radius: accuracy,
+                                        color: "rgba(0, 0, 255, 0.2)"
+                                    });
+                                } else {
+                                    myMarker.setLngLat(coords);
+                                    myAccuracyCircle.setCenter(coords).setRadius(accuracy);
+                                }
+
+                                // Send my location to server
+                                socket.emit("send-location", { latitude, longitude, accuracy });
+                            },
+                            (error) => console.error("Geolocation error:", error),
+                            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+                        );
+                    } else {
+                        alert("Geolocation not supported in your browser.");
+                    }
+                });
+
+                // ✅ Other users’ markers
+                socket.on("receive-location", (data) => {
+                    const { id, latitude, longitude } = data;
+                    const coords = [longitude, latitude];
+
+                    if (!otherMarkers[id]) {
+                        otherMarkers[id] = olaMaps.addMarker({
+                            map,
+                            lngLat: coords,
+                            color: "red"
+                        });
+                    } else {
+                        otherMarkers[id].setLngLat(coords);
+                    }
+                });
+
+                // ✅ Remove marker when user disconnects
+                socket.on("user-disconnected", (id) => {
+                    if (otherMarkers[id]) {
+                        otherMarkers[id].remove();
+                        delete otherMarkers[id];
+                    }
+                });
+            });
+        </script>
+    </body>
+    </html>
+  `);
 });
 
-socket.on("user-disconnected", (id) => {
-    if (markers[id]) {
-        map.removeLayer(markers[id]);
-        map.removeLayer(accuracyCircles[id]);
-        delete markers[id];
-        delete accuracyCircles[id];
-    }
+// Socket.io events
+io.on("connection", (socket) => {
+  console.log("✅ User connected:", socket.id);
+
+  socket.on("send-location", (data) => {
+    io.emit("receive-location", { id: socket.id, ...data });
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ User disconnected:", socket.id);
+    io.emit("user-disconnected", socket.id);
+  });
+});
+
+// Start server
+server.listen(3000, () => {
+  console.log("🚀 Server running at http://localhost:3000");
 });

@@ -2,33 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Real-Time Location Sharing</title>
-
-  <!-- Leaflet CSS -->
-  <link 
-    rel="stylesheet" 
-    href="https://unpkg.com/leaflet/dist/leaflet.css" 
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Live Location Map</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/olamaps-web-sdk"></script>
   <style>
-    body {
+    body, html {
       margin: 0;
       padding: 0;
+      height: 100%;
     }
     #map {
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
-
-  <!-- Socket.IO -->
-  <script src="/socket.io/socket.io.js"></script>
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <!-- Your client-side script -->
-  <script src="Js/script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
